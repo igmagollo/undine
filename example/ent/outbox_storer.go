@@ -48,7 +48,7 @@ func NewOutboxStorer(tx *Tx) *OutboxStorer {
 	}
 }
 
-func (o *OutboxStorer) Store(ctx context.Context, messages ...OutboxStorerMessage) error {
+func (o *OutboxStorer) Store(ctx context.Context, messages ...*OutboxStorerMessage) error {
 	if len(messages) == 0 {
 		return nil
 	}
@@ -79,7 +79,7 @@ func (o *OutboxStorer) Store(ctx context.Context, messages ...OutboxStorerMessag
 	return nil
 }
 
-func (o *OutboxStorer) validateMessages(messages []OutboxStorerMessage) error {
+func (o *OutboxStorer) validateMessages(messages []*OutboxStorerMessage) error {
 	var errs error = nil
 	for i, m := range messages {
 		if err := m.Validate(); err != nil {

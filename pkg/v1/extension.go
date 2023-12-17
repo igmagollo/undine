@@ -116,6 +116,8 @@ func (Extension) Templates() []*gen.Template {
 	return []*gen.Template{
 		gen.MustParse(gen.NewTemplate("WithTx").ParseFiles("../../templates/with_tx.go.tmpl")),
 		gen.MustParse(gen.NewTemplate("OutboxStorer").ParseFiles("../../templates/outbox_storer.go.tmpl")),
+		gen.MustParse(gen.NewTemplate("OutboxWatermill").ParseFiles("../../templates/outbox_watermill.go.tmpl")),
 		gen.MustParse(gen.NewTemplate("ProcessedmessageWatermill").ParseFiles("../../templates/processedmessage_watermill.go.tmpl")),
+		gen.MustParse(gen.NewTemplate("Watermill").ParseFiles("../../templates/watermill.go.tmpl")),
 	}
 }

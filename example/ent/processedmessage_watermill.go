@@ -16,6 +16,13 @@ type ProcessedMessageMarker struct {
 	topic string
 }
 
+func NewProcessedMessageMarker(tx *Tx, topic string) *ProcessedMessageMarker {
+	return &ProcessedMessageMarker{
+		tx:    tx,
+		topic: topic,
+	}
+}
+
 func (p *ProcessedMessageMarker) MarkAsProcessed(ctx context.Context, msg *message.Message) error {
 	msgID := msg.UUID
 	if msgID == "" {
