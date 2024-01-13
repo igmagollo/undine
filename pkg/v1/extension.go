@@ -4,6 +4,25 @@ import (
 	"entgo.io/ent/entc"
 	"entgo.io/ent/entc/gen"
 	"entgo.io/ent/schema/field"
+
+	_ "embed"
+)
+
+var (
+	//go:embed templates/db.go.tmpl
+	dbTemplate string
+
+	//go:embed templates/with_tx.go.tmpl
+	withTxTemplate string
+
+	//go:embed templates/undine_outbox.go.tmpl
+	undineOutboxTemplate string
+
+	//go:embed templates/undine_deduplicator.go.tmpl
+	undineDeduplicatorTemplate string
+
+	//go:embed templates/watermill_context_executor.go.tmpl
+	watermillContextExecutorTemplate string
 )
 
 type Extension struct {
@@ -64,10 +83,10 @@ func (Extension) Options() []entc.Option {
 
 func (Extension) Templates() []*gen.Template {
 	return []*gen.Template{
-		gen.MustParse(gen.NewTemplate("DB").ParseFiles("../../templates/db.go.tmpl")),
-		gen.MustParse(gen.NewTemplate("WithTx").ParseFiles("../../templates/with_tx.go.tmpl")),
-		gen.MustParse(gen.NewTemplate("UndineOutbox").ParseFiles("../../templates/undine_outbox.go.tmpl")),
-		gen.MustParse(gen.NewTemplate("UndineDeduplicator").ParseFiles("../../templates/undine_deduplicator.go.tmpl")),
-		gen.MustParse(gen.NewTemplate("WatermillContextExecutor").ParseFiles("../../templates/watermill_context_executor.go.tmpl")),
+		gen.MustParse(gen.NewTemplate("DB").Parse(dbTemplate)),
+		gen.MustParse(gen.NewTemplate("WithTx").Parse(withTxTemplate)),
+		gen.MustParse(gen.NewTemplate("UndineOutbox").Parse(undineOutboxTemplate)),
+		gen.MustParse(gen.NewTemplate("UndineDeduplicator").Parse(undineDeduplicatorTemplate)),
+		gen.MustParse(gen.NewTemplate("WatermillContextExecutor").Parse(watermillContextExecutorTemplate)),
 	}
 }
