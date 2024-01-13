@@ -33,7 +33,7 @@ import (
 
 func main() {
 	err := entc.Generate("./schema", &gen.Config{}, entc.Extensions(
-		undine.NewExtension("./schema"),
+		undine.Extension{},
 	))
 	if err != nil {
 		log.Fatalf("running ent codegen: %v", err)

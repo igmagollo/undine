@@ -6,16 +6,8 @@ import (
 	"entgo.io/ent/schema/field"
 )
 
-func NewExtension(schemaPath string) Extension {
-	return Extension{
-		schemaPath: schemaPath,
-	}
-}
-
 type Extension struct {
 	entc.DefaultExtension
-
-	schemaPath string
 }
 
 func (Extension) Name() string {
