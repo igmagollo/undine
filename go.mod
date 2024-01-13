@@ -29,5 +29,4 @@ require (
 	github.com/ThreeDotsLabs/watermill-sql v1.4.0
 	github.com/fergusstrange/embedded-postgres v1.25.0
 	github.com/google/uuid v1.3.1
-	github.com/mattn/go-sqlite3 v1.14.16
 )
