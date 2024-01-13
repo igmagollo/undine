@@ -6,11 +6,5 @@ import (
 	"entgo.io/ent/dialect/sql"
 )
 
-// Outbox is the predicate function for outbox builders.
-type Outbox func(*sql.Selector)
-
-// ProcessedMessage is the predicate function for processedmessage builders.
-type ProcessedMessage func(*sql.Selector)
-
 // User is the predicate function for user builders.
 type User func(*sql.Selector)

@@ -15,9 +15,13 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/sql"
-	"github.com/igmagollo/undine/example/ent/outbox"
-	"github.com/igmagollo/undine/example/ent/processedmessage"
+	"github.com/ThreeDotsLabs/watermill"
+	wsql "github.com/ThreeDotsLabs/watermill-sql/pkg/sql"
+	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/igmagollo/undine/example/ent/user"
+	undine "github.com/igmagollo/undine/pkg/v1"
+
+	stdsql "database/sql"
 )
 
 // Client is the client that holds all ent builders.
@@ -25,10 +29,6 @@ type Client struct {
 	config
 	// Schema is the client for creating, migrating and dropping schema.
 	Schema *migrate.Schema
-	// Outbox is the client for interacting with the Outbox builders.
-	Outbox *OutboxClient
-	// ProcessedMessage is the client for interacting with the ProcessedMessage builders.
-	ProcessedMessage *ProcessedMessageClient
 	// User is the client for interacting with the User builders.
 	User *UserClient
 }
@@ -42,8 +42,6 @@ func NewClient(opts ...Option) *Client {
 
 func (c *Client) init() {
 	c.Schema = migrate.NewSchema(c.driver)
-	c.Outbox = NewOutboxClient(c.config)
-	c.ProcessedMessage = NewProcessedMessageClient(c.config)
 	c.User = NewUserClient(c.config)
 }
 
@@ -59,7 +57,12 @@ type (
 		// hooks to execute on mutations.
 		hooks *hooks
 		// interceptors to execute on queries.
-		inters *inters
+		inters                    *inters
+		WatermillLogger           watermill.LoggerAdapter
+		Publisher                 message.Publisher
+		OutboxSchemaAdapter       wsql.SchemaAdapter
+		OutboxOffsetsAdapter      wsql.OffsetsAdapter
+		DeduplicatorSchemaAdapter undine.DeduplicatorSchemaAdapter
 	}
 	// Option function to configure the client.
 	Option func(*config)
@@ -103,6 +106,41 @@ func Driver(driver dialect.Driver) Option {
 	}
 }
 
+// WatermillLogger configures the WatermillLogger.
+func WatermillLogger(v watermill.LoggerAdapter) Option {
+	return func(c *config) {
+		c.WatermillLogger = v
+	}
+}
+
+// Publisher configures the Publisher.
+func Publisher(v message.Publisher) Option {
+	return func(c *config) {
+		c.Publisher = v
+	}
+}
+
+// OutboxSchemaAdapter configures the OutboxSchemaAdapter.
+func OutboxSchemaAdapter(v wsql.SchemaAdapter) Option {
+	return func(c *config) {
+		c.OutboxSchemaAdapter = v
+	}
+}
+
+// OutboxOffsetsAdapter configures the OutboxOffsetsAdapter.
+func OutboxOffsetsAdapter(v wsql.OffsetsAdapter) Option {
+	return func(c *config) {
+		c.OutboxOffsetsAdapter = v
+	}
+}
+
+// DeduplicatorSchemaAdapter configures the DeduplicatorSchemaAdapter.
+func DeduplicatorSchemaAdapter(v undine.DeduplicatorSchemaAdapter) Option {
+	return func(c *config) {
+		c.DeduplicatorSchemaAdapter = v
+	}
+}
+
 // Open opens a database/sql.DB specified by the driver name and
 // the data source name, and returns a new client attached to it.
 // Optional parameters can be added for configuring the client.
@@ -135,11 +173,9 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 	cfg := c.config
 	cfg.driver = tx
 	return &Tx{
-		ctx:              ctx,
-		config:           cfg,
-		Outbox:           NewOutboxClient(cfg),
-		ProcessedMessage: NewProcessedMessageClient(cfg),
-		User:             NewUserClient(cfg),
+		ctx:    ctx,
+		config: cfg,
+		User:   NewUserClient(cfg),
 	}, nil
 }
 
@@ -157,18 +193,16 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 	cfg := c.config
 	cfg.driver = &txDriver{tx: tx, drv: c.driver}
 	return &Tx{
-		ctx:              ctx,
-		config:           cfg,
-		Outbox:           NewOutboxClient(cfg),
-		ProcessedMessage: NewProcessedMessageClient(cfg),
-		User:             NewUserClient(cfg),
+		ctx:    ctx,
+		config: cfg,
+		User:   NewUserClient(cfg),
 	}, nil
 }
 
 // Debug returns a new debug-client. It's used to get verbose logging on specific operations.
 //
 //	client.Debug().
-//		Outbox.
+//		User.
 //		Query().
 //		Count(ctx)
 func (c *Client) Debug() *Client {
@@ -190,296 +224,22 @@ func (c *Client) Close() error {
 // Use adds the mutation hooks to all the entity clients.
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
-	c.Outbox.Use(hooks...)
-	c.ProcessedMessage.Use(hooks...)
 	c.User.Use(hooks...)
 }
 
 // Intercept adds the query interceptors to all the entity clients.
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
-	c.Outbox.Intercept(interceptors...)
-	c.ProcessedMessage.Intercept(interceptors...)
 	c.User.Intercept(interceptors...)
 }
 
 // Mutate implements the ent.Mutator interface.
 func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 	switch m := m.(type) {
-	case *OutboxMutation:
-		return c.Outbox.mutate(ctx, m)
-	case *ProcessedMessageMutation:
-		return c.ProcessedMessage.mutate(ctx, m)
 	case *UserMutation:
 		return c.User.mutate(ctx, m)
 	default:
 		return nil, fmt.Errorf("ent: unknown mutation type %T", m)
-	}
-}
-
-// OutboxClient is a client for the Outbox schema.
-type OutboxClient struct {
-	config
-}
-
-// NewOutboxClient returns a client for the Outbox from the given config.
-func NewOutboxClient(c config) *OutboxClient {
-	return &OutboxClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `outbox.Hooks(f(g(h())))`.
-func (c *OutboxClient) Use(hooks ...Hook) {
-	c.hooks.Outbox = append(c.hooks.Outbox, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `outbox.Intercept(f(g(h())))`.
-func (c *OutboxClient) Intercept(interceptors ...Interceptor) {
-	c.inters.Outbox = append(c.inters.Outbox, interceptors...)
-}
-
-// Create returns a builder for creating a Outbox entity.
-func (c *OutboxClient) Create() *OutboxCreate {
-	mutation := newOutboxMutation(c.config, OpCreate)
-	return &OutboxCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of Outbox entities.
-func (c *OutboxClient) CreateBulk(builders ...*OutboxCreate) *OutboxCreateBulk {
-	return &OutboxCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *OutboxClient) MapCreateBulk(slice any, setFunc func(*OutboxCreate, int)) *OutboxCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &OutboxCreateBulk{err: fmt.Errorf("calling to OutboxClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*OutboxCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &OutboxCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for Outbox.
-func (c *OutboxClient) Update() *OutboxUpdate {
-	mutation := newOutboxMutation(c.config, OpUpdate)
-	return &OutboxUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *OutboxClient) UpdateOne(o *Outbox) *OutboxUpdateOne {
-	mutation := newOutboxMutation(c.config, OpUpdateOne, withOutbox(o))
-	return &OutboxUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *OutboxClient) UpdateOneID(id uuid.UUID) *OutboxUpdateOne {
-	mutation := newOutboxMutation(c.config, OpUpdateOne, withOutboxID(id))
-	return &OutboxUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for Outbox.
-func (c *OutboxClient) Delete() *OutboxDelete {
-	mutation := newOutboxMutation(c.config, OpDelete)
-	return &OutboxDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *OutboxClient) DeleteOne(o *Outbox) *OutboxDeleteOne {
-	return c.DeleteOneID(o.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *OutboxClient) DeleteOneID(id uuid.UUID) *OutboxDeleteOne {
-	builder := c.Delete().Where(outbox.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &OutboxDeleteOne{builder}
-}
-
-// Query returns a query builder for Outbox.
-func (c *OutboxClient) Query() *OutboxQuery {
-	return &OutboxQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeOutbox},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a Outbox entity by its id.
-func (c *OutboxClient) Get(ctx context.Context, id uuid.UUID) (*Outbox, error) {
-	return c.Query().Where(outbox.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *OutboxClient) GetX(ctx context.Context, id uuid.UUID) *Outbox {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *OutboxClient) Hooks() []Hook {
-	return c.hooks.Outbox
-}
-
-// Interceptors returns the client interceptors.
-func (c *OutboxClient) Interceptors() []Interceptor {
-	return c.inters.Outbox
-}
-
-func (c *OutboxClient) mutate(ctx context.Context, m *OutboxMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&OutboxCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&OutboxUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&OutboxUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&OutboxDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown Outbox mutation op: %q", m.Op())
-	}
-}
-
-// ProcessedMessageClient is a client for the ProcessedMessage schema.
-type ProcessedMessageClient struct {
-	config
-}
-
-// NewProcessedMessageClient returns a client for the ProcessedMessage from the given config.
-func NewProcessedMessageClient(c config) *ProcessedMessageClient {
-	return &ProcessedMessageClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `processedmessage.Hooks(f(g(h())))`.
-func (c *ProcessedMessageClient) Use(hooks ...Hook) {
-	c.hooks.ProcessedMessage = append(c.hooks.ProcessedMessage, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `processedmessage.Intercept(f(g(h())))`.
-func (c *ProcessedMessageClient) Intercept(interceptors ...Interceptor) {
-	c.inters.ProcessedMessage = append(c.inters.ProcessedMessage, interceptors...)
-}
-
-// Create returns a builder for creating a ProcessedMessage entity.
-func (c *ProcessedMessageClient) Create() *ProcessedMessageCreate {
-	mutation := newProcessedMessageMutation(c.config, OpCreate)
-	return &ProcessedMessageCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of ProcessedMessage entities.
-func (c *ProcessedMessageClient) CreateBulk(builders ...*ProcessedMessageCreate) *ProcessedMessageCreateBulk {
-	return &ProcessedMessageCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *ProcessedMessageClient) MapCreateBulk(slice any, setFunc func(*ProcessedMessageCreate, int)) *ProcessedMessageCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &ProcessedMessageCreateBulk{err: fmt.Errorf("calling to ProcessedMessageClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*ProcessedMessageCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &ProcessedMessageCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for ProcessedMessage.
-func (c *ProcessedMessageClient) Update() *ProcessedMessageUpdate {
-	mutation := newProcessedMessageMutation(c.config, OpUpdate)
-	return &ProcessedMessageUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *ProcessedMessageClient) UpdateOne(pm *ProcessedMessage) *ProcessedMessageUpdateOne {
-	mutation := newProcessedMessageMutation(c.config, OpUpdateOne, withProcessedMessage(pm))
-	return &ProcessedMessageUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *ProcessedMessageClient) UpdateOneID(id uuid.UUID) *ProcessedMessageUpdateOne {
-	mutation := newProcessedMessageMutation(c.config, OpUpdateOne, withProcessedMessageID(id))
-	return &ProcessedMessageUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for ProcessedMessage.
-func (c *ProcessedMessageClient) Delete() *ProcessedMessageDelete {
-	mutation := newProcessedMessageMutation(c.config, OpDelete)
-	return &ProcessedMessageDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *ProcessedMessageClient) DeleteOne(pm *ProcessedMessage) *ProcessedMessageDeleteOne {
-	return c.DeleteOneID(pm.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *ProcessedMessageClient) DeleteOneID(id uuid.UUID) *ProcessedMessageDeleteOne {
-	builder := c.Delete().Where(processedmessage.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &ProcessedMessageDeleteOne{builder}
-}
-
-// Query returns a query builder for ProcessedMessage.
-func (c *ProcessedMessageClient) Query() *ProcessedMessageQuery {
-	return &ProcessedMessageQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeProcessedMessage},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a ProcessedMessage entity by its id.
-func (c *ProcessedMessageClient) Get(ctx context.Context, id uuid.UUID) (*ProcessedMessage, error) {
-	return c.Query().Where(processedmessage.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *ProcessedMessageClient) GetX(ctx context.Context, id uuid.UUID) *ProcessedMessage {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *ProcessedMessageClient) Hooks() []Hook {
-	return c.hooks.ProcessedMessage
-}
-
-// Interceptors returns the client interceptors.
-func (c *ProcessedMessageClient) Interceptors() []Interceptor {
-	return c.inters.ProcessedMessage
-}
-
-func (c *ProcessedMessageClient) mutate(ctx context.Context, m *ProcessedMessageMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&ProcessedMessageCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&ProcessedMessageUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&ProcessedMessageUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&ProcessedMessageDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown ProcessedMessage mutation op: %q", m.Op())
 	}
 }
 
@@ -619,9 +379,33 @@ func (c *UserClient) mutate(ctx context.Context, m *UserMutation) (Value, error)
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		Outbox, ProcessedMessage, User []ent.Hook
+		User []ent.Hook
 	}
 	inters struct {
-		Outbox, ProcessedMessage, User []ent.Interceptor
+		User []ent.Interceptor
 	}
 )
+
+// ExecContext allows calling the underlying ExecContext method of the driver if it is supported by it.
+// See, database/sql#DB.ExecContext for more information.
+func (c *config) ExecContext(ctx context.Context, query string, args ...any) (stdsql.Result, error) {
+	ex, ok := c.driver.(interface {
+		ExecContext(context.Context, string, ...any) (stdsql.Result, error)
+	})
+	if !ok {
+		return nil, fmt.Errorf("Driver.ExecContext is not supported")
+	}
+	return ex.ExecContext(ctx, query, args...)
+}
+
+// QueryContext allows calling the underlying QueryContext method of the driver if it is supported by it.
+// See, database/sql#DB.QueryContext for more information.
+func (c *config) QueryContext(ctx context.Context, query string, args ...any) (*stdsql.Rows, error) {
+	q, ok := c.driver.(interface {
+		QueryContext(context.Context, string, ...any) (*stdsql.Rows, error)
+	})
+	if !ok {
+		return nil, fmt.Errorf("Driver.QueryContext is not supported")
+	}
+	return q.QueryContext(ctx, query, args...)
+}

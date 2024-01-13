@@ -9,30 +9,6 @@ import (
 	"github.com/igmagollo/undine/example/ent"
 )
 
-// The OutboxFunc type is an adapter to allow the use of ordinary
-// function as Outbox mutator.
-type OutboxFunc func(context.Context, *ent.OutboxMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f OutboxFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.OutboxMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.OutboxMutation", m)
-}
-
-// The ProcessedMessageFunc type is an adapter to allow the use of ordinary
-// function as ProcessedMessage mutator.
-type ProcessedMessageFunc func(context.Context, *ent.ProcessedMessageMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f ProcessedMessageFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.ProcessedMessageMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ProcessedMessageMutation", m)
-}
-
 // The UserFunc type is an adapter to allow the use of ordinary
 // function as User mutator.
 type UserFunc func(context.Context, *ent.UserMutation) (ent.Value, error)

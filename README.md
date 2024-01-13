@@ -6,34 +6,18 @@ An opinionated library that combines Ent and Watermill into a set of powerful ut
 
 [Watermill](https://watermill.io/) is a library for building event-driven applications. It offers Publisher and Subscriber interfaces and implementations of them for a lot of [message brokers](https://watermill.io/pubsubs/). It has a powerfull and flexible router and offers plenty of other features that makes our lives a lot easier.
 
-The thing is, when we are working with event-driven systems, it is very common to have to deal with at-least-once guarantee and make the consumers
-idempotent. It has known solutions, but they are not so trivial to implement and they adds a lot of boilerplate and complexity to our code. We can find outbox pattern implementation packages to be used with SQL, but they don't fit with Ent due to its strong schema coupling. The same can be applied to every pattern that uses the database to add more guarantees to the delivery. So, this library aims to combine the best of both worlds, creating reusable patterns that leverages the Ent's code generation to couple it with the schema and using the watermill as the event-driven lib.
+This package is meant to combine the watermill with Ent in a way that we can use the Outbox pattern (forwarder component) and a deduplication easily
 
 # What this library offers
 
-- [x] Outbox pattern implementation
-  - [x] Outbox table creation
-  - [x] Outbox event storing
-  - [x] Outbox event publisher (just the storer implementing watermill's publisher interface)
-  - [ ] Outbox event relay
-- [x] Idempotency through deduplication
-  - [x] Deduplication table creation
-  - [x] Deduplication event storing
-- [x] Watermill Router wrapper to transactionally handle events
-  - [x] AddTransactionalHandler (just a wrapper to the router's AddHandler)
-  - [x] AddPublisherDecorators (wraps the AddPublisherDecorators to decorate outbox publishers too)
-  - [ ] Make Middlewares to be applied to the inner handler instead of the wrapped one in the AddTransactionalHandler
-- [ ] Inbox pattern implementation
-  - [ ] Inbox table creation
-  - [ ] Inbox event storing
-  - [ ] Inbox event relay
-- [ ] OpenTelemetry
-  - [ ] Metrics
-  - [ ] Tracing
+- [x] Client exporting WithTx utility function
+- [x] Outbox pattern (with watermill forwarder over Ent)
+- [x] Deduplication
+- [x] All glue code needed generated inside Ent using this Extension
 
 # How to use
 
-Add the extension to the entc command:
+First, add the extension to the entc command:
 
 ```go
 package main
@@ -58,4 +42,46 @@ func main() {
 
 ```
 
-Now, the entc will generate all the tools that undine provides in your ent package.
+Now we need to initialize the database passing some dependencies as follows:
+```go
+client, err := ent.Open("postgres", "host=127.0.0.1 port=5432 user=postgres dbname=postgres password=postgres sslmode=disable",
+		ent.DeduplicatorSchemaAdapter(&undine.DeduplicatorPostgresSchemaAdapter{}), // Deduplicator sql adapter
+		ent.WatermillLogger(logger),
+		ent.Publisher(pubsub), // outside publisher so forwarder can forward messages
+		ent.OutboxOffsetsAdapter(&sql.DefaultPostgreSQLOffsetsAdapter{}), // outbox sql adapter
+		ent.OutboxSchemaAdapter(&sql.DefaultPostgreSQLSchema{}), // outbox sql adapter
+)
+```
+
+Then everything that we need is inside `ent.Client` and `ent.Tx` structs:
+```go
+forwarder := client.Forwarder(consumerGroup)
+
+go func() {
+  if err := forwarder.Run(context.Background()); err != nil {
+    panic(err)
+  }
+}()
+
+...
+
+err := client.WithTx(ctx, func(ctx context.Context) error {
+      tx := ent.TxFromContext(ctx)
+      deduplicator := tx.Deduplicator()
+      outboxPublisher, err := tx.OutboxPublisher()
+
+      ...
+
+      err = deduplicator.Deduplicate(ctx, topic, msgID)
+
+      ...
+
+      err = outboxPublisher.Publish(topic, msg)
+
+      ...
+})
+
+if undine.IsDuplicationError(err) {
+  ...
+}
+```

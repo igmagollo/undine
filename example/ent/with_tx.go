@@ -7,18 +7,19 @@ import (
 	"fmt"
 )
 
-func WithTx(ctx context.Context, client *Client, fn func(tx *Tx) error) error {
-	tx, err := client.Tx(ctx)
+func (c *Client) WithTx(ctx context.Context, transactionalFn func(ctx context.Context) error) error {
+	tx, err := c.Tx(ctx)
 	if err != nil {
 		return err
 	}
+	tctx := NewTxContext(ctx, tx)
 	defer func() {
 		if v := recover(); v != nil {
 			tx.Rollback()
 			panic(v)
 		}
 	}()
-	if err := fn(tx); err != nil {
+	if err := transactionalFn(tctx); err != nil {
 		if rerr := tx.Rollback(); rerr != nil {
 			err = fmt.Errorf("%w: rolling back transaction: %v", err, rerr)
 		}

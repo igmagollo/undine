@@ -1,0 +1,23 @@
+{{/* Tell Intellij/GoLand to enable the autocompletion based on the *gen.Graph type. */}}
+{{/* gotype: entgo.io/ent/entc/gen.Graph */}}
+
+{{ define "DB" }}
+{{ $pkg := base $.Config.Package }}
+{{ template "header" $ }}
+
+import (
+	"database/sql"
+	"fmt"
+)
+
+func (c *Client) DB() (*sql.DB, error) {
+	driverDB, ok := c.driver.(interface {
+		DB() *sql.DB
+	})
+	if !ok {
+		return nil, fmt.Errorf("Driver.DB is not supported")
+	}
+	return driverDB.DB(), nil
+}
+
+{{ end }}
