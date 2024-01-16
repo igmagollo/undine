@@ -3,6 +3,7 @@
 package ent
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/ThreeDotsLabs/watermill-sql/pkg/sql"
@@ -59,4 +60,18 @@ func (c *Client) Forwarder(consumerGroup string, publisher message.Publisher) (*
 	}
 
 	return f, nil
+}
+
+func OutboxPublisherFromContext(ctx context.Context) (message.Publisher, error) {
+	tx := TxFromContext(ctx)
+	if tx == nil {
+		return nil, nil
+	}
+
+	publisher, err := tx.OutboxPublisher()
+	if err != nil {
+		return nil, err
+	}
+
+	return publisher, nil
 }

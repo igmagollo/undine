@@ -19,3 +19,12 @@ func (c *Client) InitializeDeduplicatorSchema(ctx context.Context) error {
 
 	return dedup.InitializeSchema(ctx)
 }
+
+func DeduplicatorFromContext(ctx context.Context) *undine.Deduplicator {
+	tx := TxFromContext(ctx)
+	if tx == nil {
+		return nil
+	}
+
+	return tx.Deduplicator()
+}

@@ -185,8 +185,8 @@ func HandleUserCreateMessage(createUserTopic <-chan *message.Message, client *en
 		}
 		err := client.WithTx(ctx, func(ctx context.Context) error {
 			tx := ent.TxFromContext(ctx)
-			deduplicator := tx.Deduplicator()
-			publisher, err := tx.OutboxPublisher()
+			deduplicator := ent.DeduplicatorFromContext(ctx)
+			publisher, err := ent.OutboxPublisherFromContext(ctx)
 			if err != nil {
 				return err
 			}
