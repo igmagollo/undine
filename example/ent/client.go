@@ -17,7 +17,6 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"github.com/ThreeDotsLabs/watermill"
 	wsql "github.com/ThreeDotsLabs/watermill-sql/pkg/sql"
-	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/igmagollo/undine/example/ent/user"
 	undine "github.com/igmagollo/undine/pkg/v1"
 
@@ -59,7 +58,6 @@ type (
 		// interceptors to execute on queries.
 		inters                    *inters
 		WatermillLogger           watermill.LoggerAdapter
-		Publisher                 message.Publisher
 		OutboxSchemaAdapter       wsql.SchemaAdapter
 		OutboxOffsetsAdapter      wsql.OffsetsAdapter
 		DeduplicatorSchemaAdapter undine.DeduplicatorSchemaAdapter
@@ -110,13 +108,6 @@ func Driver(driver dialect.Driver) Option {
 func WatermillLogger(v watermill.LoggerAdapter) Option {
 	return func(c *config) {
 		c.WatermillLogger = v
-	}
-}
-
-// Publisher configures the Publisher.
-func Publisher(v message.Publisher) Option {
-	return func(c *config) {
-		c.Publisher = v
 	}
 }
 

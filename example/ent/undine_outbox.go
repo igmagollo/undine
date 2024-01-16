@@ -33,7 +33,7 @@ func (tx *Tx) OutboxPublisher() (message.Publisher, error) {
 	return publisher, nil
 }
 
-func (c *Client) Forwarder(consumerGroup string) (*forwarder.Forwarder, error) {
+func (c *Client) Forwarder(consumerGroup string, publisher message.Publisher) (*forwarder.Forwarder, error) {
 	begginer, err := c.DB()
 	if err != nil {
 		return nil, fmt.Errorf("creating forwarder subscriber: %w", err)
@@ -51,7 +51,7 @@ func (c *Client) Forwarder(consumerGroup string) (*forwarder.Forwarder, error) {
 		return nil, fmt.Errorf("creating forwarder subscriber: %w", err)
 	}
 
-	f, err := forwarder.NewForwarder(subscriber, c.Publisher, c.WatermillLogger, forwarder.Config{
+	f, err := forwarder.NewForwarder(subscriber, publisher, c.WatermillLogger, forwarder.Config{
 		ForwarderTopic: undineOutboxSQLTopic,
 	})
 	if err != nil {

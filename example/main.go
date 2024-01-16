@@ -37,7 +37,6 @@ func main() {
 	client, err := ent.Open("postgres", "host=127.0.0.1 port=5432 user=postgres dbname=postgres password=postgres sslmode=disable",
 		ent.DeduplicatorSchemaAdapter(&undine.DeduplicatorPostgresSchemaAdapter{}),
 		ent.WatermillLogger(logger),
-		ent.Publisher(pubsub),
 		ent.OutboxOffsetsAdapter(&sql.DefaultPostgreSQLOffsetsAdapter{}),
 		ent.OutboxSchemaAdapter(&sql.DefaultPostgreSQLSchema{}),
 	)
@@ -56,7 +55,7 @@ func main() {
 		panic(err)
 	}
 
-	forwarder, err := client.Forwarder("example_consumer_group")
+	forwarder, err := client.Forwarder("example_consumer_group", pubsub)
 	if err != nil {
 		panic(err)
 	}

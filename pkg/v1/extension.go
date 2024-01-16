@@ -48,13 +48,6 @@ func (Extension) Options() []entc.Option {
 			}),
 		),
 		entc.Dependency(
-			entc.DependencyName("Publisher"),
-			entc.DependencyTypeInfo(&field.TypeInfo{
-				Ident:   "message.Publisher",
-				PkgPath: "github.com/ThreeDotsLabs/watermill/message",
-			}),
-		),
-		entc.Dependency(
 			entc.DependencyName("OutboxSchemaAdapter"),
 			entc.DependencyTypeInfo(&field.TypeInfo{
 				Ident:   "wsql.SchemaAdapter",
