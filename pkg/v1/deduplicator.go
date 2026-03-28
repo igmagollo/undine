@@ -56,7 +56,7 @@ func (d *Deduplicator) Deduplicate(ctx context.Context, topic string, id uuid.UU
 			return &DuplicationError{Err: err}
 		}
 
-		return fmt.Errorf("inserting messaga into deduplication table: %w", err)
+		return fmt.Errorf("inserting message into deduplication table: %w", err)
 	}
 
 	return nil
